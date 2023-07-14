@@ -2,6 +2,11 @@ const char MAIN_page[] PROGMEM = R"=====(
 <!DOCTYPE html>
 <html>
 <style>
+  body {
+    margin: 0;
+    padding: 0;
+  }
+
   .container {
     display: flex;
     justify-content: space-around;

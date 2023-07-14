@@ -3,23 +3,28 @@
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
-#include <math.h>
 
+// index.h contains the HTML code for the webserver
 #include "index.h"
+// wifi_credentials.h contains the credentials for the wifi network
 #include "wifi_credentials.h"
 
+// Webserver and websocket objects
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
+// Wheel constants
 const float WHEEL_CIRCUM = 0.21;
 const byte WHEEL_STEPS = 20;
 const unsigned int WHEEL_CALC_INTERVAL = 1000;
 
+// Motor light slot sensor pins
 const byte MOTOR_1_SENSOR = 16;
 const byte MOTOR_2_SENSOR = 17;
 const byte MOTOR_3_SENSOR = 5;
 const byte MOTOR_4_SENSOR = 18;
 
+// Motor pins
 const byte MOTOR_1_IN1 = 13;
 const byte MOTOR_1_IN2 = 12;
 const byte MOTOR_2_IN1 = 27;
@@ -29,6 +34,7 @@ const byte MOTOR_3_IN2 = 25;
 const byte MOTOR_4_IN1 = 33;
 const byte MOTOR_4_IN2 = 32;
 
+// Motor PWM channels
 const byte MOTOR_1_IN1_CHANNEL = 0;
 const byte MOTOR_1_IN2_CHANNEL = 1;
 const byte MOTOR_2_IN1_CHANNEL = 2;
@@ -38,40 +44,51 @@ const byte MOTOR_3_IN2_CHANNEL = 5;
 const byte MOTOR_4_IN1_CHANNEL = 6;
 const byte MOTOR_4_IN2_CHANNEL = 7;
 
-const byte MOTOR_STARTUP_LENGTH = 50;
+// Multiplier for calculating steering values based on inputted steering
+const byte STEERING_MULTIPLIER = 0.2;
 
+// Motor driver PWM constants
 const unsigned int PWM_FREQ = 5000;
 const byte PWM_RESOLUTION = 8;
 
+// Time to run motor at full speed at startup
+const byte MOTOR_STARTUP_LENGTH = 20;
+
+// Timer for calculating wheel speed
 Neotimer speedTimer = Neotimer(WHEEL_CALC_INTERVAL);
 
+// Variables for storing wheel speed
 byte motorSensorCounter[4] = {0, 0, 0, 0};
-unsigned int motorSpeed[4] = {0, 0, 0, 0};
+unsigned int wheelSpeed[4] = {0, 0, 0, 0};
 
+// Motor PWM channels and pins
 const byte MOTOR_CHANNELS[8] = {
     MOTOR_1_IN1_CHANNEL, MOTOR_1_IN2_CHANNEL,
     MOTOR_2_IN1_CHANNEL, MOTOR_2_IN2_CHANNEL,
     MOTOR_3_IN1_CHANNEL, MOTOR_3_IN2_CHANNEL,
     MOTOR_4_IN1_CHANNEL, MOTOR_4_IN2_CHANNEL};
-
 const byte MOTOR_PINS[8] = {
     MOTOR_1_IN1, MOTOR_1_IN2,
     MOTOR_2_IN1, MOTOR_2_IN2,
     MOTOR_3_IN1, MOTOR_3_IN2,
     MOTOR_4_IN1, MOTOR_4_IN2};
 
+// Motor timers for startup
 Neotimer motorTimers[4] = {
     Neotimer(MOTOR_STARTUP_LENGTH),
     Neotimer(MOTOR_STARTUP_LENGTH),
     Neotimer(MOTOR_STARTUP_LENGTH),
     Neotimer(MOTOR_STARTUP_LENGTH)};
 
+// Motor speed and direction
 byte motorSpeeds[4] = {0, 0, 0, 0};
 bool motorForwards[4] = {true, true, true, true};
 
+// Inputted robot speed and steering
 int robotSpeed = 0;
 int robotSteering = 0;
 
+// Counter functions for motor speed calculation
 void motorSensorCount1()
 {
   motorSensorCounter[0]++;
@@ -89,49 +106,69 @@ void motorSensorCount4()
   motorSensorCounter[3]++;
 }
 
+// Function for calculating wheel speed
 void calcSpeed()
 {
   for (int i = 0; i < 4; i++)
   {
-    motorSpeed[i] = int(motorSensorCounter[i] * WHEEL_CIRCUM / WHEEL_STEPS * WHEEL_CALC_INTERVAL);
+    // Calculate wheel speed in mm/s based on wheel circumference, number of steps, and time interval
+    wheelSpeed[i] = int(motorSensorCounter[i] * WHEEL_CIRCUM / WHEEL_STEPS * WHEEL_CALC_INTERVAL);
+    // Reset light slot counter
     motorSensorCounter[i] = 0;
   }
 
   // Serial.print("speed 1 [mm/s]: ");
-  // Serial.print(motorSpeed[0]);
+  // Serial.print(wheelSpeed[0]);
   // Serial.print("  |  speed 2 [mm/s]: ");
-  // Serial.print(motorSpeed[1]);
+  // Serial.print(wheelSpeed[1]);
   // Serial.print("  |  speed 3 [mm/s]: ");
-  // Serial.print(motorSpeed[2]);
+  // Serial.print(wheelSpeed[2]);
   // Serial.print("  |  speed 4 [mm/s]: ");
-  // Serial.println(motorSpeed[3]);
+  // Serial.println(wheelSpeed[3]);
 }
 
+// Function for writing motor speed
 void writeMotorSpeed(byte motorIdx, byte speed, bool forward)
 {
+  // Write speed to motor
   ledcWrite(MOTOR_CHANNELS[motorIdx * 2 + !forward], speed);
   ledcWrite(MOTOR_CHANNELS[motorIdx * 2 + forward], 0);
 }
 
+// Function for updating motor speed
 void updateMotorSpeed(byte motorIdx, byte speed, bool forward)
 {
-  if (motorSpeeds[motorIdx] != speed)
+  if (abs(motorSpeeds[motorIdx] - speed) > 10)
   {
-    writeMotorSpeed(motorIdx, 255, forward);
+    // If motor is stopped, start it at full speed for a short time
+    if (wheelSpeed[motorIdx] == 0)
+    {
+      // Set motor speed to 200 for a short time
+      writeMotorSpeed(motorIdx, 200, forward);
 
-    motorTimers[motorIdx].start();
-    motorSpeeds[motorIdx] = speed;
-    motorForwards[motorIdx] = forward;
+      // Start timer for writing correct motor speed after startup
+      motorTimers[motorIdx].start();
+      motorSpeeds[motorIdx] = speed;
+      motorForwards[motorIdx] = forward;
+    }
+    else
+    {
+      // Set motor speed
+      writeMotorSpeed(motorIdx, speed, forward);
+    }
   }
 }
 
+// Function for setting motor speed after startup time has elapsed
 void checkMotorSpeeds()
 {
   for (int motorIdx = 0; motorIdx < 4; motorIdx++)
   {
     if (motorTimers[motorIdx].done())
     {
+      // Reset timer
       motorTimers[motorIdx].reset();
+      // Write correct motor speed
       writeMotorSpeed(motorIdx, motorSpeeds[motorIdx], motorForwards[motorIdx]);
     }
   }
@@ -139,31 +176,33 @@ void checkMotorSpeeds()
 
 void notifyClients()
 {
+  // Calculate updated percentage values for speed and steering
   int updateSpeed = 100.0 - (255.0 - robotSpeed) / 510.0 * 100.0;
   int updateSteering = (robotSteering + 255.0) / 510.0 * 100.0;
   String message = String(updateSpeed) + "," + String(updateSteering);
 
+  // Send message to all connected websocket clients
   ws.textAll(message);
 }
 
+// Function for handling incoming websocket messages
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
 {
   AwsFrameInfo *info = (AwsFrameInfo *)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT)
   {
     String message = (char *)data;
+
+    // Extract speed and steering values from message (format: "speed,steering")
     robotSpeed = message.substring(0, message.indexOf(",")).toInt();
     robotSteering = message.substring(message.indexOf(",") + 1).toInt();
 
-    // Serial.print("speed: ");
-    // Serial.print(robotSpeed);
-    // Serial.print("  |  steering: ");
-    // Serial.println(robotSteering);
-
+    // Notify connected clients of updated values
     notifyClients();
   }
 }
 
+// Function for handling websocket events
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
              void *arg, uint8_t *data, size_t len)
 {
@@ -184,15 +223,18 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
   }
 }
 
+// Function for handling template variables in HTML
 String processor(const String &var)
 {
   if (var == "SPEED_PERCENTAGE")
   {
-    int value = 100.0 - (255.0 - robotSpeed) / 510.0 * 100.0;
+    // Calculate percentage value for speed
+    int value = (255.0 - robotSpeed) / 510.0 * 100.0;
     return String(value) + "%";
   }
   else if (var == "STEERING_PERCENTAGE")
   {
+    // Calculate percentage value for steering
     int value = (robotSteering + 255.0) / 510.0 * 100.0;
     return String(value) + "%";
   }
@@ -204,6 +246,7 @@ void setup()
 {
   Serial.begin(115200);
 
+  // Connect to WiFi
   Serial.println("");
   Serial.print("Connecting to ");
   Serial.println(ssid);
@@ -216,20 +259,25 @@ void setup()
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 
+  // Set up websocket server
   Serial.println("Starting server...");
   ws.onEvent(onEvent);
+  // Set up HTTP server
   server.addHandler(&ws);
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
             { request->send_P(200, "text/html", MAIN_page, processor); });
   server.begin();
 
+  // Set up motor sensors for interrupts
   Serial.println("Setting up interrupts...");
   attachInterrupt(digitalPinToInterrupt(MOTOR_1_SENSOR), motorSensorCount1, RISING);
   attachInterrupt(digitalPinToInterrupt(MOTOR_2_SENSOR), motorSensorCount2, RISING);
   attachInterrupt(digitalPinToInterrupt(MOTOR_3_SENSOR), motorSensorCount3, RISING);
   attachInterrupt(digitalPinToInterrupt(MOTOR_4_SENSOR), motorSensorCount4, RISING);
+  // Set up timer for calculating wheel speeds
   speedTimer.set(WHEEL_CALC_INTERVAL);
 
+  // Set up motors for PWM
   Serial.println("Setting up motors...");
   for (int i = 0; i < 8; i++)
   {
@@ -242,35 +290,43 @@ void setup()
 
 void loop()
 {
+  // Calculate wheel speeds at regular intervals
   if (speedTimer.repeat())
   {
     calcSpeed();
   }
 
+  // Check if motor speed needs to be updated after startup
   checkMotorSpeeds();
 
+  // Cleanup disconnected clients
   ws.cleanupClients();
 
+  // Variables for determining the motor speeds
   bool forward = robotSpeed >= 0;
   byte motorSpeed = abs(robotSpeed);
 
-  byte steeringMultiplier = abs(robotSteering / 10.0);
-  byte steeringSpeed = constrain(motorSpeed + steeringMultiplier, 0, 255);
-  byte negativeSteeringSpeed =
-      steeringSpeed == 255 ? motorSpeed - (motorSpeed + steeringMultiplier) % 255 : motorSpeed;
+  // Calculate value difference between left and right motors
+  byte steeringValue = abs(robotSteering * STEERING_MULTIPLIER);
+  // Calculate high side value for motors
+  byte motorSpeedHighSide = constrain(motorSpeed + steeringValue, 0, 255);
+  // Calculate low side value for motors to ensure the difference is correct
+  byte motorSpeedLowSide =
+      motorSpeedHighSide == 255 ? motorSpeed - (motorSpeed + steeringValue) % 255 : motorSpeed;
 
+  // Set motor speeds based on steering direction
   if (robotSteering > 0)
   {
-    updateMotorSpeed(0, negativeSteeringSpeed, forward);
-    updateMotorSpeed(1, negativeSteeringSpeed, forward);
-    updateMotorSpeed(2, steeringSpeed, forward);
-    updateMotorSpeed(3, steeringSpeed, forward);
+    updateMotorSpeed(0, motorSpeedLowSide, forward);
+    updateMotorSpeed(1, motorSpeedLowSide, forward);
+    updateMotorSpeed(2, motorSpeedHighSide, forward);
+    updateMotorSpeed(3, motorSpeedHighSide, forward);
   }
   else
   {
-    updateMotorSpeed(0, steeringSpeed, forward);
-    updateMotorSpeed(1, steeringSpeed, forward);
-    updateMotorSpeed(2, negativeSteeringSpeed, forward);
-    updateMotorSpeed(3, negativeSteeringSpeed, forward);
+    updateMotorSpeed(0, motorSpeedHighSide, forward);
+    updateMotorSpeed(1, motorSpeedHighSide, forward);
+    updateMotorSpeed(2, motorSpeedLowSide, forward);
+    updateMotorSpeed(3, motorSpeedLowSide, forward);
   }
 }
