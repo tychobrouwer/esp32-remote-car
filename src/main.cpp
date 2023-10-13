@@ -16,7 +16,7 @@ AsyncWebSocket ws("/ws");
 // Wheel constants
 const float WHEEL_CIRCUM = 0.21;
 const byte WHEEL_STEPS = 20;
-const unsigned int WHEEL_CALC_INTERVAL = 1000;
+const unsigned int WHEEL_CALC_INTERVAL = 500;
 
 // Motor light slot sensor pins
 const byte MOTOR_1_SENSOR = 16;
@@ -45,14 +45,19 @@ const byte MOTOR_4_IN1_CHANNEL = 6;
 const byte MOTOR_4_IN2_CHANNEL = 7;
 
 // Multiplier for calculating steering values based on inputted steering
-const byte STEERING_MULTIPLIER = 0.2;
+const byte STEERING_DIVISOR = 2;
+
+// Multiplier for correcting motor speed based on wheel speed
+const byte SPEED_CORRECTION_DIVISOR = 20;
 
 // Motor driver PWM constants
-const unsigned int PWM_FREQ = 5000;
+const unsigned int PWM_FREQ = 16000;
 const byte PWM_RESOLUTION = 8;
 
-// Time to run motor at full speed at startup
-const byte MOTOR_STARTUP_LENGTH = 20;
+// Motor constants
+const byte MOTOR_STARTUP_LENGTH = 50;
+const byte MOTOR_MINIMUM_SPEED = 100;
+const byte MOTOR_MINIMUM_DIFF = 10;
 
 // Timer for calculating wheel speed
 Neotimer speedTimer = Neotimer(WHEEL_CALC_INTERVAL);
@@ -117,14 +122,14 @@ void calcSpeed()
     motorSensorCounter[i] = 0;
   }
 
-  // Serial.print("speed 1 [mm/s]: ");
-  // Serial.print(wheelSpeed[0]);
-  // Serial.print("  |  speed 2 [mm/s]: ");
-  // Serial.print(wheelSpeed[1]);
-  // Serial.print("  |  speed 3 [mm/s]: ");
-  // Serial.print(wheelSpeed[2]);
-  // Serial.print("  |  speed 4 [mm/s]: ");
-  // Serial.println(wheelSpeed[3]);
+  Serial.print("speed 1 [mm/s]: ");
+  Serial.print(wheelSpeed[0]);
+  Serial.print("  |  speed 2 [mm/s]: ");
+  Serial.print(wheelSpeed[1]);
+  Serial.print("  |  speed 3 [mm/s]: ");
+  Serial.print(wheelSpeed[2]);
+  Serial.print("  |  speed 4 [mm/s]: ");
+  Serial.println(wheelSpeed[3]);
 }
 
 // Function for writing motor speed
@@ -138,7 +143,7 @@ void writeMotorSpeed(byte motorIdx, byte speed, bool forward)
 // Function for updating motor speed
 void updateMotorSpeed(byte motorIdx, byte speed, bool forward)
 {
-  if (abs(motorSpeeds[motorIdx] - speed) > 10)
+  if (abs(motorSpeeds[motorIdx] - speed) > MOTOR_MINIMUM_DIFF)
   {
     // If motor is stopped, start it at full speed for a short time
     if (wheelSpeed[motorIdx] == 0)
@@ -176,9 +181,9 @@ void checkMotorSpeeds()
 
 void notifyClients()
 {
-  // Calculate updated percentage values for speed and steering
   int updateSpeed = 100.0 - (255.0 - robotSpeed) / 510.0 * 100.0;
   int updateSteering = (robotSteering + 255.0) / 510.0 * 100.0;
+
   String message = String(updateSpeed) + "," + String(updateSteering);
 
   // Send message to all connected websocket clients
@@ -307,26 +312,34 @@ void loop()
   byte motorSpeed = abs(robotSpeed);
 
   // Calculate value difference between left and right motors
-  byte steeringValue = abs(robotSteering * STEERING_MULTIPLIER);
+  byte steeringValue = abs(robotSteering / STEERING_DIVISOR);
   // Calculate high side value for motors
   byte motorSpeedHighSide = constrain(motorSpeed + steeringValue, 0, 255);
   // Calculate low side value for motors to ensure the difference is correct
   byte motorSpeedLowSide =
       motorSpeedHighSide == 255 ? motorSpeed - (motorSpeed + steeringValue) % 255 : motorSpeed;
 
+  // Map motor speeds to correct range
+  motorSpeedHighSide = map(motorSpeedHighSide, 0, 255, MOTOR_MINIMUM_SPEED, 255);
+  motorSpeedLowSide = map(motorSpeedLowSide, 0, 255, MOTOR_MINIMUM_SPEED, 255);
+
+  // Correction for motor speed based on wheel speed
+  int motorCorrection12 = ((int)wheelSpeed[1] - (int)wheelSpeed[2]) / SPEED_CORRECTION_DIVISOR;
+  int motorCorrection34 = ((int)wheelSpeed[3] - (int)wheelSpeed[4]) / SPEED_CORRECTION_DIVISOR;
+
   // Set motor speeds based on steering direction
   if (robotSteering > 0)
   {
-    updateMotorSpeed(0, motorSpeedLowSide, forward);
-    updateMotorSpeed(1, motorSpeedLowSide, forward);
-    updateMotorSpeed(2, motorSpeedHighSide, forward);
-    updateMotorSpeed(3, motorSpeedHighSide, forward);
+    updateMotorSpeed(0, motorSpeedLowSide - motorCorrection12, forward);
+    updateMotorSpeed(1, motorSpeedLowSide + motorCorrection12, forward);
+    updateMotorSpeed(2, motorSpeedHighSide - motorCorrection34, forward);
+    updateMotorSpeed(3, motorSpeedHighSide + motorCorrection34, forward);
   }
   else
   {
-    updateMotorSpeed(0, motorSpeedHighSide, forward);
-    updateMotorSpeed(1, motorSpeedHighSide, forward);
-    updateMotorSpeed(2, motorSpeedLowSide, forward);
-    updateMotorSpeed(3, motorSpeedLowSide, forward);
+    updateMotorSpeed(0, motorSpeedHighSide - motorCorrection12, forward);
+    updateMotorSpeed(1, motorSpeedHighSide + motorCorrection12, forward);
+    updateMotorSpeed(2, motorSpeedLowSide - motorCorrection34, forward);
+    updateMotorSpeed(3, motorSpeedLowSide + motorCorrection34, forward);
   }
 }
