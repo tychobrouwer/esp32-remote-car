@@ -72,7 +72,6 @@ static void motor_sensor_init(struct motor_t *motor)
     ESP_LOGI(TAG, "initialize pcnt channel %d", motor->pin_sensor);
     pcnt_channel_handle_t pcnt_chan = NULL;
     ESP_ERROR_CHECK(pcnt_new_channel(motor->pcnt_unit, &chan_a_config, &pcnt_chan));
-
     ESP_ERROR_CHECK(pcnt_channel_set_edge_action(pcnt_chan, PCNT_CHANNEL_EDGE_ACTION_INCREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
 
     ESP_LOGI(TAG, "enable, clear, and start pcnt unit %d", motor->pin_sensor);
