@@ -1,3 +1,8 @@
+#ifndef INDEX_H
+#define INDEX_H
+
+#include <Arduino.h>
+
 const char MAIN_page[] PROGMEM = R"=====(
 <!DOCTYPE html>
 <html>
@@ -175,3 +180,5 @@ const char MAIN_page[] PROGMEM = R"=====(
 
 </html>
 )=====";
+
+#endif
