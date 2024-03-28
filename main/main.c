@@ -3,6 +3,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/pulse_cnt.h"
+#include "driver/mcpwm.h"
 #include "esp_log.h"
 
 static const char *TAG = "esp-car";
@@ -14,39 +15,37 @@ static const char *TAG = "esp-car";
 
 #define MOTOR_COUNT             4
 
-#define SENSOR_PIN1             34
-#define SENSOR_PIN2             35
-#define SENSOR_PIN3             36
-#define SENSOR_PIN4             39
+#define SENSOR_PIN1             35
+#define SENSOR_PIN2             34
+#define SENSOR_PIN3             39
+#define SENSOR_PIN4             36
 
-#define MOTOR1_PIN1             19
-#define MOTOR1_PIN2             21
-#define MOTOR2_PIN1             22
-#define MOTOR2_PIN2             23
-#define MOTOR3_PIN1             25
-#define MOTOR3_PIN2             26
-#define MOTOR4_PIN1             32
-#define MOTOR4_PIN2             33
-
-#define GPIO_OUTPUT_PIN_SEL    ((1ULL<<MOTOR1_PIN1) | \
-                                (1ULL<<MOTOR1_PIN2) | \
-                                (1ULL<<MOTOR2_PIN1) | \
-                                (1ULL<<MOTOR2_PIN2) | \
-                                (1ULL<<MOTOR3_PIN1) | \
-                                (1ULL<<MOTOR3_PIN2) | \
-                                (1ULL<<MOTOR4_PIN1) | \
-                                (1ULL<<MOTOR4_PIN2))
+#define MOTOR1_PIN1             21
+#define MOTOR1_PIN2             19
+#define MOTOR2_PIN1             32
+#define MOTOR2_PIN2             33
+#define MOTOR3_PIN1             23
+#define MOTOR3_PIN2             22
+#define MOTOR4_PIN1             25
+#define MOTOR4_PIN2             26
 
 #define WHEEL_RADIUS            214 / 1000.0
 #define SENSOR_RESOLUTION       40
 
+#define MS_TO_TICKS(ms)         (ms / portTICK_PERIOD_MS)
+#define TICKS_TO_MS(ticks)      (ticks * portTICK_PERIOD_MS)
+
 struct motor_t {
-  uint8_t pin1;
-  uint8_t pin2;
-  uint8_t pin_sensor;
-  pcnt_unit_handle_t pcnt_unit;
-  uint32_t lastRefreshTime;
-  float speed;
+    uint8_t pin1;
+    uint8_t pin2;
+    mcpwm_unit_t mcpwm_unit;
+    mcpwm_timer_t mcpwm_timer;
+    mcpwm_io_signals_t io_signal1;
+    mcpwm_io_signals_t io_signal2;
+    uint8_t pin_sensor;
+    pcnt_unit_handle_t pcnt_unit;
+    TickType_t lastCalcTicks;
+    float speed;
 };
 
 static void motor_sensor_init(struct motor_t *motor)
@@ -80,57 +79,93 @@ static void motor_sensor_init(struct motor_t *motor)
     ESP_ERROR_CHECK(pcnt_unit_start(motor->pcnt_unit));
 }
 
-static void motor_speed_update(struct motor_t *motor) {
-  uint8_t diff = xTaskGetTickCount() - motor->lastRefreshTime;
-  motor->lastRefreshTime += diff;
+static void motor_sensor_calc(struct motor_t *motor) {
+  TickType_t tickDiff = xTaskGetTickCount() - motor->lastCalcTicks;
+  motor->lastCalcTicks += tickDiff;
 
-  uint8_t count = 0;
-  pcnt_unit_get_count(motor->pcnt_unit, &count);
-  pcnt_unit_clear_count(motor->pcnt_unit);
+  int count = 0;
+  ESP_ERROR_CHECK(pcnt_unit_get_count(motor->pcnt_unit, &count));
+  ESP_ERROR_CHECK(pcnt_unit_clear_count(motor->pcnt_unit));
 
-  motor->speed = WHEEL_RADIUS / SENSOR_RESOLUTION * count / (diff * portTICK_PERIOD_MS / 1000.0);
+  motor->speed = WHEEL_RADIUS / SENSOR_RESOLUTION * count / (TICKS_TO_MS(tickDiff) / 1000.0);
 }
 
-static void motor_init(struct motor_t *motor) {
-    gpio_set_level(motor->pin1, 0);
-    gpio_set_level(motor->pin2, 0);
-}
+static void mcpwm_motor_init(struct motor_t *motor) {
+    ESP_LOGI(TAG, "initialize mcpwm unit %d, signal1 %d, signal2 %d", motor->mcpwm_unit, motor->io_signal1, motor->io_signal2);
+    ESP_ERROR_CHECK(mcpwm_gpio_init(motor->mcpwm_unit, motor->io_signal1, motor->pin1));
+    ESP_ERROR_CHECK(mcpwm_gpio_init(motor->mcpwm_unit, motor->io_signal2, motor->pin2));
 
-static void gpio_config_init() {
-    ESP_LOGI(TAG, "initialize gpio");
-    gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_DISABLE,
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = GPIO_OUTPUT_PIN_SEL,
-        .pull_down_en = 0,
-        .pull_up_en = 0,
+    mcpwm_config_t pwm_config = {
+        .frequency = 25,
+        .cmpr_a = 0,
+        .cmpr_b = 0,
+        .duty_mode = MCPWM_DUTY_MODE_0,
+        .counter_mode = MCPWM_UP_COUNTER,
     };
-    gpio_config(&io_conf);
+    ESP_LOGI(TAG, "initialize mcpwm unit %d, timer %d", motor->mcpwm_unit, motor->mcpwm_timer);
+    ESP_ERROR_CHECK(mcpwm_init(motor->mcpwm_unit, motor->mcpwm_timer, &pwm_config));
+}
+
+void test_loop(struct motor_t motors[4]) {
+    while (1) {
+        vTaskDelay(MS_TO_TICKS(500));
+
+        for (uint8_t i = 0; i < MOTOR_COUNT; i++) {
+            motor_sensor_calc(&motors[i]);
+        }
+
+        mcpwm_set_duty(motors[0].mcpwm_unit, motors[0].mcpwm_timer, MCPWM_OPR_A, 20.0);
+        mcpwm_set_duty(motors[1].mcpwm_unit, motors[1].mcpwm_timer, MCPWM_OPR_A, 20.0);
+        mcpwm_set_duty(motors[2].mcpwm_unit, motors[2].mcpwm_timer, MCPWM_OPR_A, 20.0);
+        mcpwm_set_duty(motors[3].mcpwm_unit, motors[3].mcpwm_timer, MCPWM_OPR_A, 20.0);
+
+        ESP_LOGI(TAG, "motor speeds: %f, %f, %f, %f", motors[0].speed, motors[1].speed, motors[2].speed, motors[3].speed);
+    }
+}
+
+void test_speed_loop(struct motor_t motors[4]) {
+    for (uint8_t i = 0; i < MOTOR_COUNT; i++) {
+        struct motor_t *motor = &motors[i];
+        float duty = 0.0;
+
+        while (duty < 100.0) {
+            float results[100] = {};
+            
+            mcpwm_set_duty(motor->mcpwm_unit, motor->mcpwm_timer, MCPWM_OPR_A, duty);
+
+            vTaskDelay(MS_TO_TICKS(500));
+            
+            for (uint8_t j = 0; j < 100; j++) {
+                vTaskDelay(MS_TO_TICKS(250));
+
+                motor_sensor_calc(motor);
+                results[j] = motor->speed;
+            }
+
+            float sum = 0.0;
+            for (uint8_t j = 0; j < 100; j++) {
+                sum += results[j];
+            }
+            ESP_LOGI(TAG, "%d,%f,%f", i, duty, sum/100.0);
+
+            duty += 0.5;
+        }
+    } 
 }
 
 void app_main()
 {
     struct motor_t motors[MOTOR_COUNT] = {
-        {MOTOR1_PIN1, MOTOR1_PIN2, SENSOR_PIN1, NULL, 0, 0.0},
-        {MOTOR2_PIN1, MOTOR2_PIN2, SENSOR_PIN2, NULL, 0, 0.0},
-        {MOTOR3_PIN1, MOTOR3_PIN2, SENSOR_PIN3, NULL, 0, 0.0},
-        {MOTOR4_PIN1, MOTOR4_PIN2, SENSOR_PIN4, NULL, 0, 0.0}
+        {MOTOR1_PIN1, MOTOR1_PIN2, MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM0A, MCPWM0B, SENSOR_PIN1, NULL, 0, 0.0},
+        {MOTOR2_PIN1, MOTOR2_PIN2, MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM1A, MCPWM1B, SENSOR_PIN2, NULL, 0, 0.0},
+        {MOTOR3_PIN1, MOTOR3_PIN2, MCPWM_UNIT_0, MCPWM_TIMER_2, MCPWM2A, MCPWM2B, SENSOR_PIN3, NULL, 0, 0.0},
+        {MOTOR4_PIN1, MOTOR4_PIN2, MCPWM_UNIT_1, MCPWM_TIMER_0, MCPWM0A, MCPWM0B, SENSOR_PIN4, NULL, 0, 0.0}
     };
 
-    gpio_config_init();
-
     for (uint8_t i = 0; i < MOTOR_COUNT; i++) {
-        motor_init(&motors[i]);
+        mcpwm_motor_init(&motors[i]);
         motor_sensor_init(&motors[i]);
     }
 
-    while (1) {
-        vTaskDelay(250 / portTICK_PERIOD_MS);
-
-        for (uint8_t i = 0; i < MOTOR_COUNT; i++) {
-            motor_speed_update(&motors[i]);
-        }
-
-        ESP_LOGI(TAG, "motor speeds: %f, %f, %f, %f", motors[0].speed, motors[1].speed, motors[2].speed, motors[3].speed);
-    }
+    test_speed_loop(motors);
 }
