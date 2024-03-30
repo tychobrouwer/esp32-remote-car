@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 
-df = pd.read_csv('motor-data.csv', header=None, names=['Motor', 'Duty Cycle', 'Speed'])
+df = pd.read_csv('motor-noload-data.csv', header=None, names=['Motor', 'Duty Cycle', 'Speed'])
 grouped = df.groupby('Motor')
 
 plt.figure(figsize=(10, 6))
