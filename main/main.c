@@ -124,33 +124,47 @@ void test_loop(struct motor_t motors[4]) {
 }
 
 void test_speed_loop(struct motor_t motors[4]) {
-    for (uint8_t i = 0; i < MOTOR_COUNT; i++) {
-        struct motor_t *motor = &motors[i];
-        float duty = 0.0;
+    float duty = 0.0;
 
-        while (duty < 100.0) {
-            float results[100] = {};
+    mcpwm_set_duty(motors[0].mcpwm_unit, motors[0].mcpwm_timer, MCPWM_OPR_A, 0.0);
+    mcpwm_set_duty(motors[1].mcpwm_unit, motors[1].mcpwm_timer, MCPWM_OPR_A, 0.0);
+    mcpwm_set_duty(motors[2].mcpwm_unit, motors[2].mcpwm_timer, MCPWM_OPR_A, 0.0);
+    mcpwm_set_duty(motors[3].mcpwm_unit, motors[3].mcpwm_timer, MCPWM_OPR_A, 0.0);
+
+    while (duty <= 100.0) {
+        float sum1 = 0.0;
+        float sum2 = 0.0;
+        float sum3 = 0.0;
+        float sum4 = 0.0;
+
+        mcpwm_set_duty(motors[0].mcpwm_unit, motors[0].mcpwm_timer, MCPWM_OPR_A, duty);
+        mcpwm_set_duty(motors[1].mcpwm_unit, motors[1].mcpwm_timer, MCPWM_OPR_A, duty);
+        mcpwm_set_duty(motors[2].mcpwm_unit, motors[2].mcpwm_timer, MCPWM_OPR_A, duty);
+        mcpwm_set_duty(motors[3].mcpwm_unit, motors[3].mcpwm_timer, MCPWM_OPR_A, duty);
+
+        vTaskDelay(MS_TO_TICKS(500));
+
+        for (uint8_t j = 0; j < 100; j++) {
+            vTaskDelay(MS_TO_TICKS(250));
+
+            motor_sensor_calc(&motors[0]);
+            motor_sensor_calc(&motors[1]);
+            motor_sensor_calc(&motors[2]);
+            motor_sensor_calc(&motors[3]);
             
-            mcpwm_set_duty(motor->mcpwm_unit, motor->mcpwm_timer, MCPWM_OPR_A, duty);
-
-            vTaskDelay(MS_TO_TICKS(500));
-            
-            for (uint8_t j = 0; j < 100; j++) {
-                vTaskDelay(MS_TO_TICKS(250));
-
-                motor_sensor_calc(motor);
-                results[j] = motor->speed;
-            }
-
-            float sum = 0.0;
-            for (uint8_t j = 0; j < 100; j++) {
-                sum += results[j];
-            }
-            ESP_LOGI(TAG, "%d,%f,%f", i, duty, sum/100.0);
-
-            duty += 0.5;
+            sum1 += motors[0].speed;
+            sum2 += motors[1].speed;
+            sum3 += motors[2].speed;
+            sum4 += motors[3].speed;
         }
-    } 
+
+        ESP_LOGI(TAG, "%d,%f,%f", 1, duty, sum1/100.0);
+        ESP_LOGI(TAG, "%d,%f,%f", 2, duty, sum2/100.0);
+        ESP_LOGI(TAG, "%d,%f,%f", 3, duty, sum3/100.0);
+        ESP_LOGI(TAG, "%d,%f,%f", 4, duty, sum4/100.0);
+
+        duty += 0.5;
+    }
 }
 
 void app_main()
