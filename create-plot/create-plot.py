@@ -48,12 +48,12 @@ for i in range(1, 5):
 plt.plot(x, p(x), label='Fitted curve', color='red')
 
 # Add text with polynomial coefficients
-plt.text(0.3, 0.08, coefficients, fontsize=10, transform=plt.gca().transAxes)
+#plt.text(0.3, 0.08, coefficients, fontsize=10, transform=plt.gca().transAxes)
 
 # Add legend, labels, title and grid
-plt.ylabel('Duty Cycle [%]')
-plt.xlabel('Speed [m/s]')
-plt.title('Duty Cycle [%] vs Speed [m/s] for motor 1 to 4')
+plt.ylabel('Duty Cycle [%]', fontsize = 16)
+plt.xlabel('Speed [m/s]', fontsize = 16)
+plt.title('Duty Cycle [%] vs Speed [m/s] for motor 1 to 4', fontsize = 16)
 plt.legend()
 plt.grid(True)
 plt.show()
